@@ -1,0 +1,14 @@
+{
+  "name": "sf-book",
+  "version": "1.0.0",
+  "description": "Sfeer's GitBook",
+  "homepage": "https://sfeer.github.io/sf-book",
+  "scripts": {
+    "serve": "gitbook serve",
+    "build": "gitbook build",
+    "pdf": "gitbook pdf"
+  },
+  "devDependencies": {
+    "gitbook-cli": "^2.3.2"
+  }
+}
