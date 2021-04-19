@@ -21,8 +21,10 @@
 #### 企业微信后端主要软件模块
 
 * 接入层：反向代理-wwlnginx | 正向代理-socks5
+  
 * 连接层：短连接-wwlproxy | 长连接-wwlconn | 客户端CGI-wwllogic | 
 文件CGI-wwlhttpsvr | 开放平台CGI-wwlopenlogic | 管理端CGI-wwlmngnjlogic
+  
 * 逻辑层：苹果/安卓推送-wwlapns | 登录后台-wwlauthsvr | 账号逻辑-wwlaccountsvr | 
 消息推送中心-wwlpush | 聊天后台-wwlchatlogicsvr | 外部联系人-wwlcontactmq | 
 云端互联-wwlreportsvr | 应用后台-wwlappsvr | 企业搜索-wwlcorpseek | 
@@ -31,8 +33,9 @@
 跨集群同步队列-wwlidmqsvr | 开放平台后台-wwlopenlogic | 序列产生器-wwlidallocsvr | 
 跨集群同步服务-wwlidcsyncsvr | 公安互联模块-wwlgalogic | 公安互联回调-wwlgapcallback | 
 解析音视频-wwlaudiosvr
-* 存储层：结构数据存储-wwlpkv | 消息存储-wwlxkv | 临时存储-wwlredis | 
-通用mysql存储-wwlmysql | 临时文件存储-wwlfile | 永久文件存储-wwlopenmedia
+  
+* 存储层：通用kv存储-wwlpkv | 消息数据存储-wwlmsgpkv | 组织架构存储-wwlcorpkv | 
+通用mysql存储-wwlmysql | 文件存储-wwl | 通用搜索存储-wwlpaxossearchkv
 
 #### 简易网络拓扑
 
@@ -41,9 +44,11 @@
 1. 接入服务器：导入访问流量 | 负载均衡 | 对外做正向代理
 2. 逻辑服务器：逻辑运算类服务 | 临时文件存储 | 收藏文件存储
 包含长短连接和CGI及微服务（即上述连接层和逻辑层）
-3. 存储服务器：wwlxkv-即时通信消息存储 | wwlpkv-组织架构结构化数据存储 | wwlmysql-运维统计、日志数据 | 
+3. 存储服务器：wwlmsgpkv-即时通信消息存储 | wwlcorpkv-组织架构存储 | wwlmysql-运维统计、日志数据（需开启） | wwldfs-临时文件、收藏文件、素材
 XKV存储服务：基于三机协商 | 二副本一校验
 PaxosKV存储服务：基于Paxos协议 | 三副本
+   
+分布式文件存储集群可以单独拆分部署  wwldfs  可以异地独立部署类似cdn
 
 **注：wwlpkv wwlxkv 1.5以前只有xkv，二者都是腾讯自研。**
 **注：存储服务器三的倍数，同组两台坏掉会导致存储失败。**
@@ -64,6 +69,9 @@ PaxosKV存储服务：基于Paxos协议 | 三副本
 10%文件消息，平均下载带宽50KBps每用户
 6000 * 0.5 * 10% * 50KB * 8 = 120Mbps
 
+每人每天发送20个文件，平均文件2MB
+6000 * 20 * 2MB = 240GB/天
+
 每台接入机最多支持28232个客户端连接（短连接、长连接数总和），扣除预留的大概一台接入机2.7w的客户端
 ```
 cat /etc/sysctl.conf
@@ -75,7 +83,7 @@ net.ipv4.ip_local_port_range=32768 61000   <-- 28232个临时端口
 | 200人以下 | 1接入+1测试 | 如果存储机可以连接互联网，不需要接入机
 | 2万人以下 | 2接入+3逻辑存储混合部署 | 
 | 5万人以下 | 2接入+3逻辑+3存储 |
-| 10万人以下 | 4接入+6逻辑+6存储 |
+| 10万人以下 | 4接入+6逻辑+6存储+N台文件存储 |
 
 #### 部署方案
 
@@ -97,28 +105,36 @@ net.ipv4.ip_local_port_range=32768 61000   <-- 28232个临时端口
 - 强烈建议物理机
 - CPU >= 24核，支持 rdtscp 指令 `grep rdtscp /proc/cpuinfo`
 - 内存 >= 64G
-- 磁盘本地磁盘： wwlpkv wwlxkv 对本地磁盘做了优化
+- 磁盘本地磁盘： 网络磁盘IO会是瓶颈
 - 存储节点做SSD **RAID10** 存储空间 >1T 每台
 - 逻辑节点和存储节点必须为3的倍数
 - 网卡带宽 > 1000Mbps，双网卡bounding
 
+`./PRECHECK.sh [sip存储/lip逻辑/pip接入/dfs文件/ops运维]`
+
 操作系统环境
 
-- Centos6.5、RedHat6.5 Basic Server
+- Centos6.5、RedHat6.5 Basic Server （上一个版本）
+- Centos7.x、RedHat7.x Basic Server
 
 网络策略
 
 - 端口进：80/433，8080
+  若接入机前端由F5接入，工作模式需要配置为透明模式（4层）
 - 端口出：80/433，8080，2195（苹果推送），2196（苹果推送）
 
 #### 磁盘情况
 
 - 安装目录：/home/wwlocal
-- 存储节点关注：/home/wwlocal/wwlxkv /home/wwlocal/wwlpkv
+- 存储节点关注：/home/wwlocal/wwlmsgpkv /home/wwlocal/wwlpkv
+- 分布式文件关注：/home/wwlocal/wwldfs   
 - 逻辑节点关注：/home/wwlocal/wwlfilesvr /home/wwlocal/wwlopenmediasvr
 - 关注磁盘IO速度
-    顺序写 100MB/s 1万人以上 500MB/s
-    随机读 100MB/s 1万人以上 500MB/s
+
+    顺序写(bs=600KB) 核心存储节点 iops>3000 | 逻辑服务节点 iops>2000 | 文件存储节点 iops>200
+    随机读(bs=4KB)   核心存储节点 iops>20000 | 逻辑服务节点 iops>1000 | 文件存储节点 iops>400
+  
+基本上只有SSD才能满足
 
 #### 网络连通性
 
@@ -135,21 +151,22 @@ sysctl -p
 
 测试接入机的端口联通性
 进口：python -m SimpleHTTPServer 80/8080，然后外网访问
-出口：外网机器wget或者curl命令来下载文件，测试一批腾讯的服务域名
+出口：外网机器wget或者curl命令来下载文件，测试一批腾讯的服务域名和各手机厂商的推送网址是否连通
 
 #### 安装包
 
+WeCRM上申请后下发
 package安装包 patch补丁
 
 #### 环境情况记录
 
-《部署前环境检查表》、《部署验收报告》
+《部署前环境检查表》、《部署验收报告》、网络拓扑图、提交到WeCRM
 
 #### 部署过程
 
 - 解压安装包
 ```
-tar -zxf wwlocal-1.5.0.tar.gz -C /home/
+tar -zxf wwlocal-2.4.60000.tar.gz -C /home/
 cd /home/wwlocal
 ls
 ```
@@ -158,7 +175,7 @@ ls
 
 修改nginx配置（wwlnginx目录下）
 
-`vi /home/wwlocal/wwlnginx/conf/nginx.conf`
+`vi /home/wwlocal/wwlnginx/conf/webhost.conf`
 
 执行SETUPPROXY.sh
 
@@ -203,6 +220,28 @@ SIP3=XX.XX.XX.XX
 - 确认部署网络拓扑
 - 各端的功能可用性
 - 找客户接口人确认工作（签字）
+
+### 五、升级与自动化升级（新 ）
+
+版本升级操作已趋于标准化
+
+- 不停服升级
+- 步骤固定
+
+```
+install.sh
+init.sh
+CHECK.sh
+```
+
+企业微信2.4.60000以上版本
+
+接入机安装wwltcpbridge服务端  逻辑机安装wwltcpbridge客户端
+
+1. 申请cloudid
+2. 部署wwltcpbridge
+3. 修改正向代理配置
+4. 部署运维平台
 
 ## T202企业微信私有化运维-运维支持
 
