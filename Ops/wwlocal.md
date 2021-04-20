@@ -245,33 +245,41 @@ CHECK.sh
 
 ## T202企业微信私有化运维-运维支持
 
+https://lexiangla.com/docs/b0a4a4e802ec11eb9fce26fcc0d42795?company_from=a4298ebe4a2411e8b6535254005b9a60
+
 ### 架构简介
 
 #### 核心功能调用链
 
 客户端登录
 
-nginx > wwlproxy-短连接 > wwllogic-客户端CGI > wwlauthsvr-登录后台 > wwlxkv-消息存储
+wwlnginx-反向代理 > wwlproxy-短连接 > wwllogic-客户端CGI > wwlauthsvr-登录后台 > wwlpkv-通用kv存储
 
 客户端发消息
 
-nginx > wwlproxy-短连接 > wwlogic-客户端CGI >wwlchatlogicsvr-聊天后台 > wwlxkv-消息存储
+wwlnginx-反向代理 > wwlproxy-短连接 > wwlogic-客户端CGI > wwlchatlogicsvr-聊天后台 > wwlmqsvr-通用MQ（群聊）-> wwlmsgpkv-消息存储
 
 客户端推送消息
 
-上面的wwlchatlogicsvr-聊天后台 > wwlmqasyncsvr > wwlpush > wwlconn或ss5
+- 下行长连接收消息
 
-1.6版本开始 核心存储逐渐xkv替换为pkv
+wwlpush-消息推送中心 > wwlconn-长连接 > wwlnginx-方向代理
 
-2.0版本开始 引入了独立文件存储wwldfs，逐步代替wwlfilesvr
+- 下行第三方推送消息
 
-和客户端有长连接时消息通过长连接推送，苹果/小米/华为推送使用ss5
+wwlpush-消息推送中心 > wwlapns-苹果/安卓推送 > wwlsocks5proxy-正向代理 > 第三方厂商 > 客户端
+
+**1.6版本开始 核心存储逐渐xkv替换为pkv**
+
+**2.0版本开始 引入了独立文件存储wwldfs，逐步代替wwlfilesvr**
+
+**和客户端有长连接时消息通过长连接推送，苹果/小米/华为推送使用ss5**
 
 ### 运维规范
 
 #### 目录结构
 
-产品运行目录 /home/wwlocal
+产品运行目录 /home/wwlocal/
 
 服务的目录结构<br>
 /home/wwlocal/wwl* 逻辑层模块<br>
@@ -289,6 +297,7 @@ nginx > wwlproxy-短连接 > wwlogic-客户端CGI >wwlchatlogicsvr-聊天后台 
     /home/wwlocal/conf/global/wwllogic_cli.conf
 - 全局配置（当前客户端的）可以配置是否开启红包等功能<br>
     /home/wwlocal/conf/global/localglobal.conf
+  全局配置查看网址：http://接入地址/wework_admin/client_corp_conf?version=2
 
 #### 路由访问
 
@@ -300,36 +309,52 @@ nginx > wwlproxy-短连接 > wwlogic-客户端CGI >wwlchatlogicsvr-聊天后台 
     Nginx配置
 - 逻辑层多机一致性哈希容灾<br>
     核心存储层分组三机容灾
+    逻辑存储无状态
 
 #### 定时任务
 
 - 接入机<br>
     crontab -l<br>
-    同步时间<br>
-    清理日志<br>
-    监控ss5<br>
+    同步时间-SyncTime<br>
+    清理日志-clear_log<br>
+    监控服务合集-Mon_all<br>
+    切割日志-rotate_log<br>
 - 逻辑/存储机
     crontab -l<br>
     同步时间<br>
     本地监控分区表<br>
-    红包DB按年建表<br>
+    通讯录冷备-corp_bak_tool<br>
     监控服务 Mon_all 监控所有服务Mon_开头，监控目的防止服务失败，记录服务运行情况（日志里的restart）<br>
 
 #### 后台日志
 
-- 接入机<br>
-    /home/wwlocal/bin/clean_connlog.sh 每天3点切割nginx和ss5日志并压缩、保留七天
+- 接入机
+  
+    /home/wwlocal/wwlnginx/log{,s}/
 
-- 逻辑/存储机<br>
-    /home/wwlocal/bin/clear_disk.sh<br>
+    每天凌晨2点切割nginx日志并压缩，默认保留14天
+
+    wwlsocks5proxy 日志位于 /home/wwlocal/log/error 目录下
+      
+
+- 逻辑/存储机
+
+    /home/wwlocal/log/error
+  
+    /home/wwlocal/bin/clear_disk.sh
+  
     每15分钟清理压缩指定目录文件，日志保留14天
 
-    /home/wwlocal/bin/clean_connlog.sh<br>
+    /home/wwlocal/bin/clean_connlog.sh
+  
     每天3点切割nginx和ss5日志并压缩、保留七天
 
     消息存储管理端配置清理规则
 
-    临时文件存储自动清理<br>
+    临时文件存储自动清理
+
+    localglobal.conf可配置  
+
     默认单击保留200G或者365天
 
 #### 操作规范
@@ -347,19 +372,37 @@ nginx > wwlproxy-短连接 > wwlogic-客户端CGI >wwlchatlogicsvr-聊天后台 
 
 ### 故障处理
 
+#### 整体
+
+故障分析
+
+- 影响面：个例、共性
+- 紧急程度：非基础功能、基础功能
+- 故障类型：网络故障、功能缺陷、性能负载
+- 分析要素：网络变更日志、环境变更日志、客户端日志、服务端日志
+
+故障处理
+
+一线处理 > 提单TAPD > 严重故障 > 企微团队协助处理
+
+- 能否上网
+- 能否打开管理后台网页
+- 模拟客户端访问
+
 #### 日志分析
 
 - 接入机日志
-    - nginx日志：/home/wwlocal/wwlnginx/目录下
-    - ss5日志：/var/log/ss5/目录下
+    - nginx日志：/home/wwlocal/wwlnginx/ 目录下
+    - ss5日志：/home/wwlocal/log/error/ 目录下
+    - 企业微信运维包装nginx并无修改nginx源码
 - 逻辑/存储机日志信息
     - 监控日志 /home/wwlocal/log/service/[date+%Y%m%d].log grep restart
     - 程序日志 /home/wwlocal/log/error/[date+%Y%m%d].log grep error
-    - 常用命令（alice别名） teer=tail+error,geer=grep+error,tsvc=tail+svc
+    - 常用命令（alice别名） terr=tail+error,gerr=grep+error,tsvc=tail+svc
     - 常用工具 CHECK.sh wwlops_tools
 - 企业帐号信息
     - 获取corpid<br>
-    /home/wwlocal/wwlops/wwlops_tools get_corpid<br>
+    /home/wwlocal/wwlops/wwlops_tools getcorpid<br>
     cat /home/wwlocal/conf/global/localglobal.conf|grep '^corpid'|awk -F = '{print$2} '
     - 获取vid（用户id）<br>
     /home/.wwlocal/wwlops/wwlops_tools get_vid<br>
@@ -376,6 +419,15 @@ nginx > wwlproxy-短连接 > wwlogic-客户端CGI >wwlchatlogicsvr-聊天后台 
 windows企业微信客户端 ctrl+shift+alt+d 开启debug模式<br>
 会话右键roomid=群的id 用户会话的消息右键获取vid=消息发送者、消息ID
 
+#### 日志对账
+
+客户端到后台全链路均开启了日志染色，可根据染色ID进行前后端日志对账
+
+- 客户端日志解密，得到HeadHex
+- nginx日志查找HeadHex
+- wwlogic cgimsg 查找HeadHex，得到日志染色id
+- 后台日志查找染色id得到请求情况
+
 #### 队列日志
 
 处理耗时
@@ -391,7 +443,7 @@ RUN 0 34 xxxxxxxxxx CMD 41 ip xx.xx.xx.xx io 18 67999
 # 其中67999是请求返回包大小
 ```
 
-处理队列<br>
+mq的异步队列<br>
 CHECK queue<br>
 队列名<br>
 delay：延时任务数<br>
@@ -399,14 +451,19 @@ ready：就绪任务数<br>
 reserve：正在处理的任务worker数，小于最大并发数<br>
 wait：等待的任务数，因UIN串行化而等待的任务<br>
 qsize：队列的堆积数（常见判断客户端延时）<br>
+cptime：上一次check point时间<br>
+
+#### 故障排查案例
 
 #### 错误码说明
 
 常见错误码
-- 201/-202： 端口连接不上或者client读写超时
-- 203：ss5代理超时，可能外网网络问题
-- 1233/-1234/-1235：服务过载相关
-- 2000/-2001：wwlxkv版本相关
+- -201/-202： 端口连接不上或者client读写超时
+- -203：ss5代理超时，可能外网网络问题
+- -1233/-1234/-1235：服务过载相关
+- 500005/500006/500007：授权文件不正确/授权文件过期/超过授权人数上限
+
+企业微信本地版公开文档，查看
 
 #### 客户端收集日志
 
@@ -441,7 +498,11 @@ Windows
     任务管理器找到WXWorkLocal.*32<br>
     右键选择“创建转储文件”
 5. 开启调试模式<br>
-    ctrl+shift+alt+d
+    ctrl+shift+alt+D
+   
+通过后台捞客户端日志
+
+24小时客户端未登录则失效
 
 #### 常见问题
 
@@ -494,11 +555,13 @@ Windows
     /home/wwlocal/conf/global/ip.lst、localglobal.conf、wwlsocks5proxy_cli.conf
 - 每台服务器节点依次执行 install.sh（升级后需要重启服务，命令执行相隔1-2分钟）
 - 检查服务<br>
-    CHECK.sh（所有服务节点升级后执行）<br>
-    grep restart /home/wwlocal/log/service/[date+%Y%m%d].log
+    CHECK.sh（所有服务节点升级后执行）
+```
+grep restart /home/wwlocal/log/service/`date%+%Y%m%d`.log
+```
     
 
-### 功能检查
+#### 功能检查
 
 - 检查基础功能
 - 检查应用功能
